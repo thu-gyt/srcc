@@ -1,0 +1,1 @@
+/proc/sys/net/ipv4/tcp_wmem 4096    16384   4194304

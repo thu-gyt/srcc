@@ -200,6 +200,7 @@ struct CPerfMon
    int32_t SndCurrSeqNo;
    int32_t pktDelivered;
    int32_t m_iISN;
+   
 };
 
 ////////////////////////////////////////////////////////////////////////////////

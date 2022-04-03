@@ -525,7 +525,7 @@ void CUDT::open()
    m_ullSYNInt = m_iSYNInterval * m_ullCPUFrequency;
   
    // set minimum NAK and EXP timeout to 100ms
-   m_ullMinNakInt = 100000 * m_ullCPUFrequency; //todo
+   m_ullMinNakInt = 15000 * m_ullCPUFrequency; //todo
    m_ullMinExpInt = 300000 * m_ullCPUFrequency;
 
    m_ullACKInt = m_ullSYNInt;

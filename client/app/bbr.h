@@ -83,6 +83,11 @@ struct RecordUint{
     int64_t pktDelivered; //TODO: 这里目前采用的是收到的ack数目
 };
 
+struct bw_RecordUint{
+    uint64_t TimeStamp;
+    int64_t pktDelivered; //TODO: 这里目前采用的是收到的ack数目
+};
+
 enum bbr_mode {
 	BBR_STARTUP,	/* ramp up sending rate rapidly to fill pipe */
 	BBR_DRAIN,	/* drain any queue created during startup */

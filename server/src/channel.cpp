@@ -71,16 +71,16 @@ CChannel::CChannel():
 m_iIPversion(AF_INET),
 m_iSockAddrSize(sizeof(sockaddr_in)),
 m_iSocket(),
-m_iSndBufSize(65536),
-m_iRcvBufSize(65536)
+m_iSndBufSize(655360000),
+m_iRcvBufSize(655360000)
 {
 }
 
 CChannel::CChannel(int version):
 m_iIPversion(version),
 m_iSocket(),
-m_iSndBufSize(65536),
-m_iRcvBufSize(65536)
+m_iSndBufSize(65536000),
+m_iRcvBufSize(65536000)
 {
    m_iSockAddrSize = (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
 }

@@ -5,17 +5,18 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include<map>
 using namespace std;
 
 class CBBR2: public CCC
 {
 public:
     CBBR2(){
-        if_write = true;
+        if_write = false;
         if(if_write){
             outfile.open("file.csv", ios::out);
             outfile << "rtt-cnt"<<','<<"mode"<<','<<"seq"<<","<<"delivered"<<","<<"rate"<<','<<"max-rate"<<','<<"pacing-rate"
-            <<','<<"inflight"<<','<<"bdp"<<','<<"min-rtt"<<endl;
+            <<','<<"inflight"<<','<<"bdp"<<','<<"min-rtt"<<','<< "cwnd" <<endl;
             outfile1.open("file1.csv", ios::out);
             outfile1 << "seq"<<','<<"delivered"<<endl;
         }
@@ -34,7 +35,6 @@ public:
 
         m_dCWndSize = 10.0; 
         bbr.has_seen_rtt = 0;  // 目前是否对rtt进行过采样
-        record_index = 0;
         bbr.mode = BBR_STARTUP;
         this->bbr_init_pacing_rate_from_rtt();
         memset(BW_Record, 0, sizeof(double)*10);
@@ -74,17 +74,18 @@ public:
 
     void bbr_update_min_rtt(int32_t seq){
 
-        int i = (record_index + 1) % 10000;
-        int j = record_index;
-        while(i !=  j){
-            if(RecordArray[i].SeqNo == seq){
-                break;
-            }
-            i = (i + 1) % 10000;
+        map<int32_t, bw_RecordUint> ::iterator l_it;
+        l_it = bw_record_map.find(seq);
+        if(l_it == bw_record_map.end()){
+            // outfile<<"we do not find"<<endl;
+            return;
         }
-        bool filter_expired;
 
-        uint32_t rtt = getTime() - RecordArray[i].TimeStamp;
+        bool filter_expired;
+        uint32_t rtt = getTime() - l_it->second.TimeStamp;
+        if(rtt < 40000){
+            return;
+        }
         /* Track min RTT seen in the min_rtt_win_sec filter window: */
         filter_expired = getTime() > (bbr.min_rtt_stamp + bbr_min_rtt_win_sec * 1e6);
 
@@ -115,6 +116,8 @@ public:
                     this->bbr_check_probe_rtt_done();
             }
         }
+
+        // bw_record_map.erase(seq);
     }
 
     void bbr_check_probe_rtt_done(){
@@ -130,10 +133,17 @@ public:
 
    void onPktSent(const CPacket* packet) {
         m_PerfInfo = getPerfInfo();
-        RecordArray[record_index].SeqNo = packet->m_iSeqNo;
-        RecordArray[record_index].TimeStamp = getTime();
-        RecordArray[record_index].pktDelivered = delivered_true;
-        record_index = (record_index + 1) % 10000;
+
+        bw_RecordUint uint1;
+        uint1.pktDelivered = delivered_true;
+        uint1.TimeStamp = getTime();
+         map<int32_t, bw_RecordUint> ::iterator l_it;
+        l_it = bw_record_map.find(packet->m_iSeqNo);
+        if(l_it == bw_record_map.end()){
+            bw_record_map[packet->m_iSeqNo]= uint1;
+            return;
+        }
+        
         // outfile1 << packet->m_iSeqNo <<','<<delivered_true <<endl;
    }
 
@@ -143,7 +153,7 @@ public:
         int32_t seq = *((int32_t *)packet->m_pcData + 1);
         m_PerfInfo = getPerfInfo();
 
-        this->bbr_update_bw(seq);
+        double rate = this->bbr_update_bw(seq);
         this->bbr_check_full_bw_reached();
         this->bbr_update_cycle_phase();
         this->bbr_check_drain();
@@ -152,20 +162,10 @@ public:
         this->bbr_set_pacing_rate(bbr.bw, bbr.pacing_gain);
         this->bbr_set_cwnd(bbr.bw, bbr.cwnd_gain);
 
-        int i = (record_index + 1) % 10000;
-        int j = record_index;
-        while(i !=  j){
-            if(RecordArray[i].SeqNo == seq){
-                break;
-            }
-            i = (i + 1) % 10000;
-        }
-        double rate =  (delivered_true - RecordArray[i].pktDelivered)\
-             * 1500 * 8 / (double)(getTime() - RecordArray[i].TimeStamp);
 
         // outfile << bbr.rtt_cnt << ','<<bbr.mode<<','<< seq <<','<<delivered_true<<','<<rate
         // <<','<<bbr.bw <<','<<pacing_rate<<','<<m_PerfInfo->SndCurrSeqNo - delivered_true - m_PerfInfo->m_iISN
-        // <<','<<this->bbr_bdp(bbr.bw, 1)<<','<<bbr.min_rtt_us<<endl;
+        // <<','<<this->bbr_bdp(bbr.bw, 1)<<','<<bbr.min_rtt_us<<','<<m_dCWndSize<<endl;
     }
 
     void bbr_check_drain(){
@@ -207,49 +207,45 @@ public:
         return is_full_length || inflight <= this->bbr_bdp(bw, 1);
     }
 
-    void bbr_update_bw(int32_t num){
+    double bbr_update_bw(int32_t num){
         bbr.round_start = 0;
         m_PerfInfo = getPerfInfo();
 
-        int i = (record_index + 1) % 10000;
-        int j = record_index;
-        while(i !=  j){
-            if(RecordArray[i].SeqNo == num){
-                break;
-            }
-            i = (i + 1) % 10000;
+        map<int32_t, bw_RecordUint> ::iterator l_it;; 
+        l_it = bw_record_map.find(num);
+        if(l_it == bw_record_map.end()){
+            // outfile<<"we do not find"<<endl;
+            return 0;
         }
 
-        // outfile << RecordArray[i].pktDelivered <<" "<< bbr.next_rtt_delivered<<endl;
-        if (RecordArray[i].pktDelivered >= bbr.next_rtt_delivered) {
+        if (l_it->second.pktDelivered >= bbr.next_rtt_delivered) {
             bbr.next_rtt_delivered = delivered_true;
             bbr.rtt_cnt++;
             bbr.round_start = 1;
             bbr.packet_conservation = 0;
         }
 
-        if(i < 10000){
-            //计算瓶颈带宽
-            uint64_t ts = getTime();
-            double rate = (delivered_true - RecordArray[i].pktDelivered)\
-             * 1500 * 8 / (double)(ts - RecordArray[i].TimeStamp);
+        //计算瓶颈带宽
+        uint64_t ts = getTime();
+        double rate = (delivered_true - l_it->second.pktDelivered)\
+            * 1500 * 8 / (double)(ts - l_it->second.TimeStamp);
 
-            if(bbr.rtt_cnt > rtt_cnt){
-                bw_index = (bw_index + 1) % 10;
+        if(bbr.rtt_cnt > rtt_cnt){
+            bw_index = (bw_index + 1) % 10;
+            BW_Record[bw_index] = rate;
+            rtt_cnt = bbr.rtt_cnt;
+        }else{
+            if(BW_Record[bw_index] < rate){
                 BW_Record[bw_index] = rate;
-                rtt_cnt = bbr.rtt_cnt;
-            }else{
-                if(BW_Record[bw_index] < rate){
-                    BW_Record[bw_index] = rate;
-                }
             }
-            double max_rate = 0;
-            for(int j = 0; j < 10; j ++){
-                if(BW_Record[j] > max_rate)
-                    max_rate = BW_Record[j];
-            }
-            bbr.bw = max_rate;
         }
+        double max_rate = 0;
+        for(int j = 0; j < 10; j ++){
+            if(BW_Record[j] > max_rate)
+                max_rate = BW_Record[j];
+        }
+        bbr.bw = max_rate;
+        return rate;
     }
 
     void bbr_set_cwnd(double bw, double cwnd_gain){
@@ -260,10 +256,11 @@ public:
         /* If we're below target cwnd, slow start cwnd toward target cwnd. */
         if (bbr.full_bw_reached)  /* only cut cwnd if we filled the pipe */
             cwnd = min(cwnd + 1, target_cwnd);
-        else if (cwnd < target_cwnd || m_PerfInfo->pktRecvACKTotal < 100)
+        else if (cwnd < target_cwnd)
             cwnd = cwnd + 1;
         if(bbr.mode == 1)
             cwnd = target_cwnd;
+        // cwnd = target_cwnd;
         cwnd = max(cwnd, bbr_cwnd_min_target);
 
         m_dCWndSize = min(cwnd, 4294967295.0);	/* apply global cap */
@@ -325,7 +322,7 @@ public:
             bbr.cwnd_gain	= 1;
             break;
         default:
-            outfile<<"BBR bad mode: " << bbr.mode << endl;
+            // outfile<<"BBR bad mode: " << bbr.mode << endl;
             break;
         }
     }
@@ -336,12 +333,157 @@ protected:
     ofstream outfile1;
     const CPerfMon* m_PerfInfo;
     BBR bbr;
-    int record_index;
-    RecordUint RecordArray[10000];
     double pacing_rate;
     //统计最大带宽相关
     double BW_Record[10];
     uint32_t rtt_cnt = 0;
     uint32_t bw_index = 0;
     int32_t delivered_true;
+    map<int32_t, bw_RecordUint> bw_record_map;
 };
+
+
+
+
+
+
+
+
+
+class CBBR4: public CCC
+{
+public:
+    CBBR4(){
+        if_write = true;
+        if(if_write){
+            outfile.open("file.csv", ios::out);
+            outfile << "rtt-cnt"<<','<<"mode"<<','<<"seq"<<","<<"delivered"<<","<<"rate"<<','<<"max-rate"<<','<<"pacing-rate"
+            <<','<<"inflight"<<','<<"bdp"<<','<<"min-rtt"<<endl;
+            outfile1.open("file1.csv", ios::out);
+            outfile1 << "seq"<<','<<"delivered"<<endl;
+        }
+    }
+    ~CBBR4(){
+        outfile.close();
+        outfile1.close();
+    }
+
+    void init(){
+        // m_dPktSndPeriod = (m_iMSS * 8.0) / 6.5;  // m_iMSS 1500 rate = 500 Mbps
+        // setRTO(0.5 * 1e6); 
+        // m_dCWndSize = 1000.0; 
+        m_dCWndSize = 100000.0; 
+        double send_rate = 490.0; //
+        m_dPktSndPeriod = 1500.0 * 8 / send_rate;
+
+        bbr.has_seen_rtt = 0;  // 目前是否对rtt进行过采样
+        bbr.mode = BBR_STARTUP;
+
+        memset(BW_Record, 0, sizeof(double)*10);
+        bbr.prior_cwnd = 0;
+        bbr.rtt_cnt = 0;
+        bbr.next_rtt_delivered = 1;
+
+        bbr.probe_rtt_done_stamp = 0;
+        bbr.probe_rtt_round_done = 0; //是否处于rtt探测阶段
+        bbr.min_rtt_us = 0;  // Minimum RTT in usec. ~0 means not available.
+        bbr.min_rtt_stamp = getTime();
+
+        bbr.round_start = 0;
+        bbr.idle_restart = 0;
+        bbr.full_bw_reached = 0;
+        bbr.full_bw = 0;
+        bbr.full_bw_cnt = 0;
+        bbr.cycle_mstamp = 0;
+        bbr.cycle_idx = 0;
+    }
+
+
+    void onACK(int32_t num){
+    }
+
+
+
+   void onPktSent(const CPacket* packet) {
+        m_PerfInfo = getPerfInfo();
+        bw_RecordUint uint1;
+        uint1.pktDelivered = delivered_true;
+        uint1.TimeStamp = getTime();
+        bw_record_map[packet->m_iSeqNo]= uint1;
+        outfile1 << packet->m_iSeqNo <<','<<delivered_true <<endl;
+   }
+
+    void processCustomMsg(const CPacket* packet) {
+
+        delivered_true = *(int32_t *)packet->m_pcData;
+        int32_t seq = *((int32_t *)packet->m_pcData + 1);
+        m_PerfInfo = getPerfInfo();
+        double rate = this->bbr_update_bw(seq);
+
+
+        // outfile << bbr.rtt_cnt << ','<<bbr.mode<<','<< seq <<','<<delivered_true<<','<<rate
+        // <<','<<bbr.bw <<','<<pacing_rate<<','<<m_PerfInfo->SndCurrSeqNo - delivered_true - m_PerfInfo->m_iISN
+        // <<','<<this->bbr_bdp(bbr.bw, 1)<<','<<bbr.min_rtt_us<<','<<m_dCWndSize<<endl;
+    }
+
+
+
+
+    double bbr_update_bw(int32_t num){
+        bbr.round_start = 0;
+        m_PerfInfo = getPerfInfo();
+
+        map<int32_t, bw_RecordUint> ::iterator l_it;; 
+        l_it = bw_record_map.find(num);
+        if(l_it == bw_record_map.end()){
+            outfile<<"we do not find"<<endl;
+            return 0;
+        }
+
+        if (l_it->second.pktDelivered >= bbr.next_rtt_delivered) {
+            bbr.next_rtt_delivered = delivered_true;
+            bbr.rtt_cnt++;
+            bbr.round_start = 1;
+            bbr.packet_conservation = 0;
+        }
+
+        //计算瓶颈带宽
+        uint64_t ts = getTime();
+        double rate = (delivered_true - l_it->second.pktDelivered)\
+            * 1500 * 8 / (double)(ts - l_it->second.TimeStamp);
+
+        if(bbr.rtt_cnt > rtt_cnt){
+            bw_index = (bw_index + 1) % 10;
+            BW_Record[bw_index] = rate;
+            rtt_cnt = bbr.rtt_cnt;
+        }else{
+            if(BW_Record[bw_index] < rate){
+                BW_Record[bw_index] = rate;
+            }
+        }
+        double max_rate = 0;
+        for(int j = 0; j < 10; j ++){
+            if(BW_Record[j] > max_rate)
+                max_rate = BW_Record[j];
+        }
+        bbr.bw = max_rate;
+        return rate;
+    }
+
+
+
+protected:
+    bool if_write;
+    ofstream outfile;
+    ofstream outfile1;
+    const CPerfMon* m_PerfInfo;
+    BBR bbr;
+    double pacing_rate;
+    //统计最大带宽相关
+    double BW_Record[10];
+    uint32_t rtt_cnt = 0;
+    uint32_t bw_index = 0;
+    int32_t delivered_true;
+    map<int32_t, bw_RecordUint> bw_record_map;
+};
+

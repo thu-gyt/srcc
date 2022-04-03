@@ -5,6 +5,7 @@
 #include <iostream>
 #include <udt.h>
 #include "bbr.h"
+#include "cc.h"
 
 using namespace std;
 
@@ -12,11 +13,6 @@ void* recvdata(void*);
 
 int main(int argc, char* argv[])
 {
-   if ((1 != argc) && ((2 != argc) || (0 == atoi(argv[1]))))
-   {
-      cout << "usage: appserver [server_port]" << endl;
-      return 0;
-   }
 
    // Automatically start up and clean up UDT module.
    UDT::startup();
@@ -32,10 +28,14 @@ int main(int argc, char* argv[])
    //hints.ai_socktype = SOCK_DGRAM;
 
    string service("9000");
-   if (2 == argc)
-      service = argv[1];
+   string ip;
+   if (3 == argc){
+      service = argv[2];
+      ip = argv[1];
+   }
 
-   if (0 != getaddrinfo("10.0.1.37", service.c_str(), &hints, &res))
+
+   if (0 != getaddrinfo(ip.c_str(), service.c_str(), &hints, &res))
    {
       cout << "illegal port number or port is busy.\n" << endl;
       return 0;
@@ -44,10 +44,13 @@ int main(int argc, char* argv[])
    UDTSOCKET serv = UDT::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
    // UDT Options
+   // UDT::setsockopt(serv, 0, UDT_CC, new CCCFactory<CUDPBlast>, sizeof(CCCFactory<CUDPBlast>));
    UDT::setsockopt(serv, 0, UDT_CC, new CCCFactory<CBBR>, sizeof(CCCFactory<CBBR>));
    //UDT::setsockopt(serv, 0, UDT_MSS, new int(9000), sizeof(int));
-   //UDT::setsockopt(serv, 0, UDT_RCVBUF, new int(10000000), sizeof(int));
-   //UDT::setsockopt(serv, 0, UDP_RCVBUF, new int(10000000), sizeof(int));
+   // UDT::setsockopt(serv, 0, UDT_SNDBUF, new int(100000000), sizeof(int));
+   // UDT::setsockopt(serv, 0, UDP_SNDBUF, new int(100000000), sizeof(int));
+   // UDT::setsockopt(serv, 0, UDT_RCVBUF, new int(100000000), sizeof(int));
+   // UDT::setsockopt(serv, 0, UDP_RCVBUF, new int(100000000), sizeof(int));
 
    if (UDT::ERROR == UDT::bind(serv, res->ai_addr, res->ai_addrlen))
    {
