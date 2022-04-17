@@ -12,7 +12,7 @@ class CBBR2: public CCC
 {
 public:
     CBBR2(){
-        if_write = false;
+        if_write = true;
         if(if_write){
             outfile.open("file.csv", ios::out);
             outfile << "rtt-cnt"<<','<<"mode"<<','<<"seq"<<","<<"delivered"<<","<<"rate"<<','<<"max-rate"<<','<<"pacing-rate"
